@@ -35,7 +35,7 @@ def build_manifest(case_set: CaseSet) -> dict[str, Any]:
         "output_schema_version": OUTPUT_SCHEMA_VERSION,
         "trace_schema_version": "day09-trace-event-v1",
         "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-        "client": {"name": "day09-student-starter", "version": "0.1.0"},
+        "client": {"name": "day09-student-starter", "version": "0.3.0"},
     }
 
 

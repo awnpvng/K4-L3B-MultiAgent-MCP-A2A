@@ -121,6 +121,38 @@ Triển khai tại:
 src/student_agent/workflow.py
 ```
 
+
+
+### Kiến trúc kỳ vọng:
+
+```
+                          ┌──────────────────────────┐
+                          │   Coordinator / Router   │
+                          └─────────────┬────────────┘
+                                        │ (Handoff)
+         ┌──────────────────────────────┼──────────────────────────────┐
+         ▼                              ▼                              ▼
+┌──────────────────┐           ┌──────────────────┐           ┌──────────────────┐
+│ Order/Item Agent │           │  Payment Agent   │           │  Shipment Agent  │
+└────────┬─────────┘           └────────┬─────────┘           └────────┬─────────┘
+         │                              │                              │
+         └──────────────────────────────┼──────────────────────────────┘
+                                        │ (MCP Evidence Collector)
+                                        ▼
+                               ┌──────────────────┐
+                               │   Policy Agent   │
+                               └────────┬─────────┘
+                                        │
+                                        ▼
+                               ┌──────────────────┐
+                               │  Verifier Agent  │
+                               └────────┬─────────┘
+                                        │ (Validated Output)
+                                        ▼
+                                   [END OUTPUT]
+```
+
+
 Hàm chính:
 
 ```python
@@ -143,6 +175,76 @@ Competition không chấm tên framework hay số lượng class. Scorer đánh 
 Trace chỉ ghi sự kiện quan sát được như `task_assigned`, `handoff`, `tool_result_consumed`, `verification_completed`.
 
 Hoàn thiện mô tả thiết kế trong `ARCHITECTURE.md`.
+
+bonus từ btc:
+""
+
+Các nhiệm vụ trọng tâm:
+
+1. Khóa Public Contracts (contracts/schemas/):
+   l3a-output-v2.schema.json (hoặc l3b): Schema bắt buộc cho output từng case.
+   trace-event-v1.schema.json: Schema cho trace log observable.
+   submission-manifest-v2.schema.json: Schema cho manifest khi đóng gói nộp bài.
+   mcp-evidence-response-v1.schema.json: Cấu trúc phong bì (envelope) trả về từ MCP Gateway.
+   Nguyên tắc: Không thêm bất kỳ field nào ngoài schema. Nếu có sai lệch, JSON Schema luôn là chân lý ưu tiên tối cao, tuyệt đối tuân thủ chỗ này nhé các bạn, ràng buộc đau đớn mà liêm
+2. Linh hoạt framework các bạn là kỹ sư thiết kế thực chiến nên là thoải mái sáng tạo:
+   Điểm triển khai chính nằm tại: src/student_agent/workflow.py:
+   async def solve_case(case: dict[str, Any], gateway: EvidenceGateway, trace: TraceWriter) -> dict[str, Any]:# Triển khai coordinator và specialist agents tại đây
+
+   ...
+   Chép
+   Cuộc thi không chấm điểm dựa trên tên framework (học viên có thể dùng LangGraph, Semantic Kernel, CrewAI hoặc thuần Python async state-machine). Hệ thống chỉ đánh giá kết quả nghiệp vụ, tính hợp lệ của bằng chứng MCP và trace log.
+3. Hoàn thiện mô tả kiến trúc trong ARCHITECTURE.md:
+   Phác thảo luồng handoff, tool permissions của từng agent, cơ chế retry khi MCP gặp sự cố.
+
+"
+
+"
+
+Mục tiêu:
+Từng agent chuyên trách truy vấn bằng chứng có thẩm quyền qua MCP Evidence Gateway theo đúng scope của từng case và ghi nhận trace audit.
+
+Nguyên tắc của MCP Gateway:
+
+# Nguyên tắc	Nếu vi phạm
+
+1	Truyền đúng case_id cho mọi MCP call	Bị từ chối truy cập (403 Forbidden)
+2	KHÔNG tự sinh hoặc sửa đổi evidence_ref	Hard Gate 0 điểm toàn bài
+3	Chỉ trích dẫn evidence thực sự hỗ trợ kết luận	Bị trừ điểm thành phần Evidence Relevance
+4	Ghi nhận event tool_result_consumed trong trace	Không được công nhận tính xác thực
+5	Server lưu Audit độc lập (Hash, Latency, Status)	Bị phát hiện nếu giả mạo trace client
+Đọc kĩ chỗ này để tránh được các lỗi nhé mọi người.
+
+Triển khai cụ thể:
+
+1. Gọi Tool qua Gateway:
+
+# Lấy dữ liệu đơn hàng có thẩm quyền từ MCP
+
+evidence = await gateway.call(
+    "get_order",
+    case_id=case["case_id"],
+    order_id=order_id,
+)
+evidence_ref = evidence["evidence_ref"]
+order_data = evidence["data"]
+Chép
+
+1. Ghi nhận Trace Event hợp lệ:
+
+# Ghi nhận sự kiện tiêu thụ bằng chứng vào trace audit
+
+trace.emit(
+    case_id=case["case_id"],
+    event_type="tool_result_consumed",
+    actor="order-agent",
+    tool_name="get_order",
+    evidence_refs=[evidence_ref],
+)
+
+
+
+"
 
 ## 6. Chạy và kiểm tra
 
@@ -178,16 +280,16 @@ Không đưa source, input, `.env`, API key hoặc debug log vào ZIP. Sau đó 
 
 ## Tiêu chí chấm điểm công khai
 
-| Thành phần                                     | Trọng số |
-| ---------------------------------------------- | -------: |
-| Độ đúng nghiệp vụ (`semantic`)                 |      40% |
-| Chất lượng bằng chứng (`evidence`)             |      15% |
-| Evidence đúng MCP audit (`provenance`)         |      15% |
-| Tính nhất quán giữa các field (`consistency`)  |      10% |
-| Đúng JSON Schema (`schema`)                    |       5% |
-| Confidence hợp lý (`calibration`)              |       5% |
-| Quy trình multi-agent trong trace (`workflow`) |       5% |
-| Hiệu quả gọi tool (`efficiency`)               |       5% |
+| Thành phần                                         | Trọng số |
+| ---------------------------------------------------- | ---------: |
+| Độ đúng nghiệp vụ (`semantic`)               |        40% |
+| Chất lượng bằng chứng (`evidence`)            |        15% |
+| Evidence đúng MCP audit (`provenance`)           |        15% |
+| Tính nhất quán giữa các field (`consistency`) |        10% |
+| Đúng JSON Schema (`schema`)                      |         5% |
+| Confidence hợp lý (`calibration`)                |         5% |
+| Quy trình multi-agent trong trace (`workflow`)    |         5% |
+| Hiệu quả gọi tool (`efficiency`)                |         5% |
 
 Case có thể nhận 0 điểm nếu:
 
